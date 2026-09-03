@@ -70,3 +70,40 @@ export interface RapportStats {
   totalEnAttente: number;
   nbCheques: number;
 }
+
+export interface BackupInfo {
+  filename: string;
+  createdAt: string;
+  size: number;
+  totalCheques: number;
+  totalFournisseurs: number;
+  createdBy: string;
+}
+
+export interface BackupData {
+  version: string;
+  appName: string;
+  exportedAt: string;
+  stats: {
+    totalCheques: number;
+    totalFournisseurs: number;
+    totalBudgets: number;
+    totalUsers?: number;
+  };
+  data: {
+    cheques: Cheque[];
+    fournisseurs: Fournisseur[];
+    budgets: Budget[];
+    notifications?: NotificationItem[];
+    auditLog?: AuditLogItem[];
+  };
+}
+
+export interface ImportSummary {
+  success: boolean;
+  total: number;
+  imported: number;
+  errors: string[];
+  message: string;
+}
+

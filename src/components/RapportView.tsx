@@ -1,17 +1,20 @@
 import React from 'react';
-import { Cheque, Fournisseur, Budget } from '../types';
-import { Printer, FileSpreadsheet, CheckCircle, Clock, XCircle, Shield } from 'lucide-react';
+import { Cheque, Fournisseur, Budget, User } from '../types';
+import { Printer, Download, CheckCircle, Clock, XCircle, Shield, FileText } from 'lucide-react';
+import { exportRapportPDF } from '../utils/pdfExport';
 
 interface RapportViewProps {
   cheques: Cheque[];
   fournisseurs: Fournisseur[];
   budget: Budget | null;
+  user?: User;
 }
 
 export const RapportView: React.FC<RapportViewProps> = ({
   cheques,
   fournisseurs,
-  budget
+  budget,
+  user
 }) => {
   const total = cheques.reduce((s, c) => s + c.montant, 0);
   const totalPaye = cheques.filter(c => c.statut === 'paye').reduce((s, c) => s + c.montant, 0);
@@ -22,22 +25,47 @@ export const RapportView: React.FC<RapportViewProps> = ({
     window.print();
   };
 
+  const handleExportPDF = () => {
+    const stats = {
+      totalGeneral: total,
+      totalPaye,
+      totalImpaye,
+      totalEnAttente,
+      nbCheques: cheques.length
+    };
+    const now = new Date();
+    const periodStr = `${now.toLocaleDateString('fr-FR', { month: 'long' })} ${now.getFullYear()}`;
+    exportRapportPDF(stats, cheques, fournisseurs, budget, periodStr, user?.name || 'Direction Chez Sahraoui');
+  };
+
   return (
     <div className="space-y-6">
       {/* Header Actions */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between gap-4 print:hidden">
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 print:hidden">
         <div>
           <h2 className="text-base font-bold text-slate-900">Rapport Financier & Décaissements</h2>
           <p className="text-xs text-slate-500">Document certifié pour la comptabilité de Chez Sahraoui</p>
         </div>
-        <button
-          id="btnPrintReport"
-          onClick={handlePrint}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition shadow-sm"
-        >
-          <Printer className="w-4 h-4" />
-          <span>Imprimer le rapport</span>
-        </button>
+        <div className="flex items-center gap-2.5">
+          <button
+            id="btnExportPdfReport"
+            type="button"
+            onClick={handleExportPDF}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition shadow-xs"
+          >
+            <Download className="w-4 h-4" />
+            <span>Exporter en PDF</span>
+          </button>
+          <button
+            id="btnPrintReport"
+            type="button"
+            onClick={handlePrint}
+            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition shadow-xs"
+          >
+            <Printer className="w-4 h-4" />
+            <span>Imprimer</span>
+          </button>
+        </div>
       </div>
 
       {/* Printable Sheet */}

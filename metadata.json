@@ -2,5 +2,7 @@
   "name": "Gestion Chez Sahraoui",
   "description": "Système de gestion professionnelle des chèques, budgets et fournisseurs pour Chez Sahraoui",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

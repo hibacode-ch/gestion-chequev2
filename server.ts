@@ -26,7 +26,14 @@ import {
   getAuditLogs,
   logAuditAction,
   getNotifications,
-  addNotificationToDb
+  addNotificationToDb,
+  getDatabaseBackupData,
+  createInternalBackupFile,
+  listInternalBackups,
+  deleteInternalBackupFile,
+  restoreFromBackupData,
+  bulkImportCheques,
+  bulkImportFournisseurs
 } from './server/db';
 import { User, Cheque, Fournisseur } from './src/types';
 
@@ -415,6 +422,163 @@ async function startServer() {
       totalEnAttente: cheques.filter(c => c.statut === 'en_attente').reduce((sum, c) => sum + c.montant, 0),
       nbCheques: cheques.length
     });
+  });
+
+  // -------------------------------------------------------------------
+  // Backup & Import Endpoints
+  // -------------------------------------------------------------------
+  // 1. Download database backup JSON
+  app.get('/api/backup/download', isAuthenticated as any, (req: AuthenticatedRequest, res: Response) => {
+    const backup = getDatabaseBackupData();
+    const dateStr = new Date().toISOString().split('T')[0];
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="backup-chez-sahraoui-${dateStr}.json"`);
+    res.send(JSON.stringify(backup, null, 2));
+  });
+
+  // 2. Get backup data as JSON object
+  app.get('/api/backup/data', isAuthenticated as any, (req: AuthenticatedRequest, res: Response) => {
+    res.json(getDatabaseBackupData());
+  });
+
+  // 3. List internal snapshots
+  app.get('/api/backup/list', isAuthenticated as any, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const list = await listInternalBackups();
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Erreur lecture liste sauvegardes' });
+    }
+  });
+
+  // 4. Create internal snapshot
+  app.post('/api/backup/snapshot', isAuthenticated as any, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = req.user!;
+      const snapshot = await createInternalBackupFile(user.name);
+      await logAuditAction('SAUVEGARDE_INTERNE', `Snapshot interne créé: ${snapshot.filename}`, user.id, user.username);
+      await addNotificationToDb('info', `💾 Sauvegarde interne créée avec succès par ${user.name}`, false);
+      res.json({ success: true, snapshot });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Erreur création sauvegarde' });
+    }
+  });
+
+  // 5. Delete internal snapshot (Admin only)
+  app.delete('/api/backup/:filename', isAdmin as any, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = req.user!;
+      const filename = req.params.filename;
+      await deleteInternalBackupFile(filename);
+      await logAuditAction('SUPPRESSION_SAUVEGARDE', `Snapshot supprimé: ${filename}`, user.id, user.username);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Erreur suppression sauvegarde' });
+    }
+  });
+
+  // 6. Restore from internal snapshot or JSON payload
+  app.post('/api/backup/restore', isAdmin as any, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = req.user!;
+      const { filename, backupData, mode } = req.body;
+      let dataToRestore = backupData;
+
+      if (filename) {
+        const backupsDir = path.join(process.cwd(), 'backups');
+        const targetPath = path.join(backupsDir, path.basename(filename));
+        if (!fs.existsSync(targetPath)) {
+          return res.status(404).json({ error: 'Fichier de sauvegarde introuvable' });
+        }
+        dataToRestore = JSON.parse(fs.readFileSync(targetPath, 'utf8'));
+      }
+
+      if (!dataToRestore) {
+        return res.status(400).json({ error: 'Données de sauvegarde manquantes' });
+      }
+
+      const result = await restoreFromBackupData(dataToRestore, mode || 'replace');
+      await logAuditAction(
+        'RESTAURATION_SAUVEGARDE',
+        `Base restaurée (${mode || 'replace'}): ${result.restored.cheques} chèques, ${result.restored.fournisseurs} fournisseurs`,
+        user.id,
+        user.username
+      );
+      await addNotificationToDb('info', `🔄 Base de données restaurée (${result.restored.cheques} chèques) par ${user.name}`, true);
+
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error('Erreur restauration:', err);
+      res.status(500).json({ error: 'Erreur lors de la restauration: ' + err.message });
+    }
+  });
+
+  // 7. Restore from uploaded file
+  app.post('/api/backup/upload-restore', isAdmin as any, upload.single('backupFile') as any, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = req.user!;
+      if (!req.file) {
+        return res.status(400).json({ error: 'Fichier requis' });
+      }
+      const raw = fs.readFileSync(req.file.path, 'utf8');
+      const parsed = JSON.parse(raw);
+      const mode = (req.body.mode === 'merge') ? 'merge' : 'replace';
+
+      const result = await restoreFromBackupData(parsed, mode);
+      await logAuditAction(
+        'RESTAURATION_FICHIER',
+        `Sauvegarde importée depuis fichier (${mode}): ${result.restored.cheques} chèques restaurés`,
+        user.id,
+        user.username
+      );
+      await addNotificationToDb('info', `📂 Sauvegarde externe restaurée par ${user.name}`, false);
+
+      // Clean up uploaded temp file
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Fichier de sauvegarde invalide ou corrompu: ' + err.message });
+    }
+  });
+
+  // 8. Bulk import Cheques (CSV/JSON parsed on client or server)
+  app.post('/api/import/cheques', isAuthenticated as any, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = req.user!;
+      const { cheques } = req.body;
+      if (!Array.isArray(cheques) || cheques.length === 0) {
+        return res.status(400).json({ error: 'Aucun chèque fourni' });
+      }
+
+      const result = await bulkImportCheques(cheques, user);
+      await logAuditAction('IMPORT_CHÈQUES', `Import de ${result.imported} chèque(s) sur ${cheques.length}`, user.id, user.username);
+      await addNotificationToDb('info', `📥 ${result.imported} chèque(s) importé(s) par ${user.name}`, false);
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('Erreur import chèques:', err);
+      res.status(500).json({ error: 'Erreur import chèques: ' + err.message });
+    }
+  });
+
+  // 9. Bulk import Fournisseurs
+  app.post('/api/import/fournisseurs', isAuthenticated as any, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = req.user!;
+      const { fournisseurs } = req.body;
+      if (!Array.isArray(fournisseurs) || fournisseurs.length === 0) {
+        return res.status(400).json({ error: 'Aucun fournisseur fourni' });
+      }
+
+      const result = await bulkImportFournisseurs(fournisseurs);
+      await logAuditAction('IMPORT_FOURNISSEURS', `Import de ${result.imported} fournisseur(s) sur ${fournisseurs.length}`, user.id, user.username);
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('Erreur import fournisseurs:', err);
+      res.status(500).json({ error: 'Erreur import fournisseurs: ' + err.message });
+    }
   });
 
   // Static files: uploads and mobile view

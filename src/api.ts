@@ -1,4 +1,4 @@
-import { User, Cheque, Fournisseur, Budget, AuditLogItem, NotificationItem, RapportStats } from './types';
+import { User, Cheque, Fournisseur, Budget, AuditLogItem, NotificationItem, RapportStats, BackupInfo, BackupData, ImportSummary } from './types';
 
 const API_BASE = '/api';
 
@@ -205,3 +205,113 @@ export async function fetchRapport(): Promise<RapportStats> {
   if (!res.ok) throw new Error('Erreur chargement rapport');
   return res.json();
 }
+
+// -------------------------------------------------------------
+// Sauvegardes & Imports API
+// -------------------------------------------------------------
+export async function fetchBackupData(): Promise<BackupData> {
+  const res = await fetch(`${API_BASE}/backup/data`, {
+    headers: getAuthHeader(),
+    credentials: 'include'
+  });
+  if (!res.ok) throw new Error('Erreur téléchargement données sauvegarde');
+  return res.json();
+}
+
+export function getBackupDownloadUrl(): string {
+  return `${API_BASE}/backup/download`;
+}
+
+export async function fetchBackupList(): Promise<BackupInfo[]> {
+  const res = await fetch(`${API_BASE}/backup/list`, {
+    headers: getAuthHeader(),
+    credentials: 'include'
+  });
+  if (!res.ok) throw new Error('Erreur chargement liste sauvegardes');
+  return res.json();
+}
+
+export async function createInternalSnapshot(): Promise<{ success: boolean; snapshot: BackupInfo }> {
+  const res = await fetch(`${API_BASE}/backup/snapshot`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeader()
+    },
+    credentials: 'include'
+  });
+  if (!res.ok) throw new Error('Erreur création snapshot interne');
+  return res.json();
+}
+
+export async function deleteInternalSnapshot(filename: string): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/backup/${encodeURIComponent(filename)}`, {
+    method: 'DELETE',
+    headers: getAuthHeader(),
+    credentials: 'include'
+  });
+  if (!res.ok) throw new Error('Erreur suppression sauvegarde');
+  return res.json();
+}
+
+export async function restoreInternalSnapshot(filename: string, mode: 'replace' | 'merge' = 'replace'): Promise<{ success: boolean; restored: { cheques: number; fournisseurs: number; budgets: number } }> {
+  const res = await fetch(`${API_BASE}/backup/restore`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeader()
+    },
+    body: JSON.stringify({ filename, mode }),
+    credentials: 'include'
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Erreur lors de la restauration');
+  return data;
+}
+
+export async function uploadAndRestoreBackup(file: File, mode: 'replace' | 'merge' = 'replace'): Promise<{ success: boolean; restored: { cheques: number; fournisseurs: number; budgets: number } }> {
+  const formData = new FormData();
+  formData.append('backupFile', file);
+  formData.append('mode', mode);
+
+  const res = await fetch(`${API_BASE}/backup/upload-restore`, {
+    method: 'POST',
+    headers: getAuthHeader(),
+    body: formData,
+    credentials: 'include'
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Erreur lors du traitement du fichier de sauvegarde');
+  return data;
+}
+
+export async function importChequesBulk(cheques: any[]): Promise<ImportSummary> {
+  const res = await fetch(`${API_BASE}/import/cheques`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeader()
+    },
+    body: JSON.stringify({ cheques }),
+    credentials: 'include'
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Erreur lors de l’importation des chèques');
+  return data;
+}
+
+export async function importFournisseursBulk(fournisseurs: any[]): Promise<ImportSummary> {
+  const res = await fetch(`${API_BASE}/import/fournisseurs`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeader()
+    },
+    body: JSON.stringify({ fournisseurs }),
+    credentials: 'include'
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Erreur lors de l’importation des fournisseurs');
+  return data;
+}
+

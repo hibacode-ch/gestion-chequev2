@@ -396,3 +396,337 @@ export async function addNotificationToDb(type: string, message: string, urgent:
     console.error('Erreur notification Firestore:', err);
   }
 }
+
+// -------------------------------------------------------------
+// BACKUP & IMPORT SYSTEM
+// -------------------------------------------------------------
+const backupsDir = path.join(process.cwd(), 'backups');
+if (!fs.existsSync(backupsDir)) {
+  fs.mkdirSync(backupsDir, { recursive: true });
+}
+
+export function getDatabaseBackupData(): any {
+  return {
+    version: '2.0',
+    appName: 'Chez Sahraoui',
+    exportedAt: new Date().toISOString(),
+    stats: {
+      totalCheques: chequesCache.length,
+      totalFournisseurs: fournisseursCache.length,
+      totalBudgets: budgetsCache.length,
+      totalUsers: usersCache.length,
+      totalSpent: chequesCache.reduce((sum, c) => sum + c.montant, 0)
+    },
+    data: {
+      cheques: chequesCache,
+      fournisseurs: fournisseursCache,
+      budgets: budgetsCache,
+      notifications: notificationsCache,
+      auditLog: auditLogCache
+    }
+  };
+}
+
+export async function createInternalBackupFile(authorName: string): Promise<any> {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const filename = `backup-chez-sahraoui-${timestamp}.json`;
+  const filePath = path.join(backupsDir, filename);
+
+  const backupPayload = {
+    ...getDatabaseBackupData(),
+    createdBy: authorName
+  };
+
+  fs.writeFileSync(filePath, JSON.stringify(backupPayload, null, 2), 'utf8');
+  const stat = fs.statSync(filePath);
+
+  const backupMeta = {
+    filename,
+    createdAt: new Date().toISOString(),
+    size: stat.size,
+    totalCheques: chequesCache.length,
+    totalFournisseurs: fournisseursCache.length,
+    createdBy: authorName
+  };
+
+  try {
+    const firestore = getDb();
+    await setDoc(doc(firestore, 'backups', filename), backupMeta);
+  } catch (err) {
+    console.warn('Erreur enregistrement métadonnées backup dans Firestore:', err);
+  }
+
+  return backupMeta;
+}
+
+export async function listInternalBackups(): Promise<any[]> {
+  const results: any[] = [];
+  if (!fs.existsSync(backupsDir)) {
+    return results;
+  }
+
+  const files = fs.readdirSync(backupsDir).filter(f => f.endsWith('.json'));
+  for (const file of files) {
+    try {
+      const fullPath = path.join(backupsDir, file);
+      const stat = fs.statSync(fullPath);
+      let meta: any = {
+        filename: file,
+        createdAt: stat.mtime.toISOString(),
+        size: stat.size,
+        totalCheques: 0,
+        totalFournisseurs: 0,
+        createdBy: 'Système'
+      };
+
+      const raw = fs.readFileSync(fullPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed.stats) {
+        meta.totalCheques = parsed.stats.totalCheques || (parsed.data?.cheques?.length ?? 0);
+        meta.totalFournisseurs = parsed.stats.totalFournisseurs || (parsed.data?.fournisseurs?.length ?? 0);
+        if (parsed.createdBy) meta.createdBy = parsed.createdBy;
+        if (parsed.exportedAt) meta.createdAt = parsed.exportedAt;
+      }
+      results.push(meta);
+    } catch (e) {
+      console.warn(`Erreur lecture backup ${file}:`, e);
+    }
+  }
+
+  results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return results;
+}
+
+export async function deleteInternalBackupFile(filename: string): Promise<boolean> {
+  const safeFilename = path.basename(filename);
+  const filePath = path.join(backupsDir, safeFilename);
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+  try {
+    const firestore = getDb();
+    await deleteDoc(doc(firestore, 'backups', safeFilename));
+  } catch (e) {}
+  return true;
+}
+
+export async function restoreFromBackupData(backup: any, mode: 'replace' | 'merge' = 'replace'): Promise<{ success: boolean; restored: { cheques: number; fournisseurs: number; budgets: number } }> {
+  const rawData = backup.data || backup;
+  const newCheques: Cheque[] = Array.isArray(rawData.cheques) ? rawData.cheques : [];
+  const newFournisseurs: Fournisseur[] = Array.isArray(rawData.fournisseurs) ? rawData.fournisseurs : [];
+  const newBudgets: Budget[] = Array.isArray(rawData.budgets) ? rawData.budgets : [];
+
+  const firestore = getDb();
+
+  if (mode === 'replace') {
+    // 1. Fournisseurs
+    fournisseursCache = [...newFournisseurs];
+    for (const f of fournisseursCache) {
+      await setDoc(doc(firestore, 'fournisseurs', String(f.id)), f);
+    }
+
+    // 2. Cheques
+    chequesCache = [...newCheques];
+    for (const c of chequesCache) {
+      await setDoc(doc(firestore, 'cheques', String(c.id)), c);
+    }
+
+    // 3. Budgets
+    if (newBudgets.length > 0) {
+      budgetsCache = [...newBudgets];
+      for (const b of budgetsCache) {
+        await setDoc(doc(firestore, 'budgets', `${b.year}-${b.month}`), b);
+      }
+    }
+  } else {
+    // Merge mode
+    for (const f of newFournisseurs) {
+      const exists = fournisseursCache.find(x => x.id === f.id || x.nom.toLowerCase() === f.nom.toLowerCase());
+      if (!exists) {
+        fournisseursCache.push(f);
+        await setDoc(doc(firestore, 'fournisseurs', String(f.id)), f);
+      }
+    }
+
+    for (const c of newCheques) {
+      const exists = chequesCache.find(x => x.id === c.id || x.numero === c.numero);
+      if (!exists) {
+        chequesCache.push(c);
+        await setDoc(doc(firestore, 'cheques', String(c.id)), c);
+      }
+    }
+  }
+
+  recalculateBudgets();
+
+  return {
+    success: true,
+    restored: {
+      cheques: chequesCache.length,
+      fournisseurs: fournisseursCache.length,
+      budgets: budgetsCache.length
+    }
+  };
+}
+
+export async function bulkImportCheques(
+  items: any[],
+  user: { id: number; name: string }
+): Promise<{ success: boolean; imported: number; errors: string[] }> {
+  const errors: string[] = [];
+  let imported = 0;
+  const firestore = getDb();
+
+  for (let idx = 0; idx < items.length; idx++) {
+    const raw = items[idx];
+    try {
+      const numero = String(raw.numero || raw.Numero || raw['N° Chèque'] || raw['Numero Cheque'] || '').trim();
+      if (!numero) {
+        errors.push(`Ligne ${idx + 1}: Numéro de chèque manquant.`);
+        continue;
+      }
+
+      // Check if numero already exists
+      const existing = chequesCache.find(c => c.numero.toLowerCase() === numero.toLowerCase());
+      if (existing) {
+        errors.push(`Ligne ${idx + 1}: Chèque n° ${numero} déjà existant.`);
+        continue;
+      }
+
+      // Supplier
+      let fId: number = 0;
+      const supplierName = String(raw.fournisseur || raw.Fournisseur || raw.fournisseurNom || '').trim();
+      const rawFId = raw.fournisseurId || raw.FournisseurId;
+
+      if (rawFId && !isNaN(parseInt(rawFId))) {
+        fId = parseInt(rawFId);
+      } else if (supplierName) {
+        let match = fournisseursCache.find(f => f.nom.toLowerCase() === supplierName.toLowerCase());
+        if (!match) {
+          match = {
+            id: Date.now() + Math.floor(Math.random() * 1000),
+            nom: supplierName,
+            telephone: raw.telephone || raw.Telephone || '',
+            adresse: raw.adresse || raw.Adresse || '',
+            createdAt: new Date().toISOString()
+          };
+          fournisseursCache.push(match);
+          await setDoc(doc(firestore, 'fournisseurs', String(match.id)), match);
+        }
+        fId = match.id;
+      } else {
+        fId = fournisseursCache[0]?.id || 101;
+      }
+
+      // Montant
+      let montantRaw = String(raw.montant || raw.Montant || '0').replace(/[^0-9.,]/g, '').replace(',', '.');
+      const montant = parseFloat(montantRaw);
+      if (isNaN(montant) || montant <= 0) {
+        errors.push(`Ligne ${idx + 1} (${numero}): Montant invalide.`);
+        continue;
+      }
+
+      // Date Paiement
+      let datePaiement = String(raw.datePaiement || raw.date || raw.Date || raw.Echeance || raw['Échéance'] || '').trim();
+      if (datePaiement.includes('/')) {
+        const parts = datePaiement.split('/');
+        if (parts.length === 3) {
+          // Assuming DD/MM/YYYY
+          datePaiement = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        }
+      }
+      if (!datePaiement || isNaN(new Date(datePaiement).getTime())) {
+        datePaiement = new Date().toISOString().split('T')[0];
+      }
+
+      // Status
+      let statut: 'en_attente' | 'paye' | 'impaye' = 'en_attente';
+      const rawStatut = String(raw.statut || raw.Statut || '').toLowerCase();
+      if (rawStatut.includes('pay') || rawStatut === 'regle' || rawStatut === 'réglé') {
+        statut = 'paye';
+      } else if (rawStatut.includes('impay') || rawStatut.includes('rejet')) {
+        statut = 'impaye';
+      }
+
+      const bonLivraison = String(raw.bonLivraison || raw.BL || raw['Bon de Livraison'] || '').trim();
+      const totalBon = raw.totalBon ? parseFloat(raw.totalBon) : montant;
+
+      const newCheque: Cheque = {
+        id: Date.now() + idx,
+        numero,
+        fournisseurId: fId,
+        montant,
+        datePaiement,
+        datePaiementReel: statut === 'paye' ? (raw.datePaiementReel || datePaiement) : null,
+        bonLivraison,
+        totalBon,
+        photo: null,
+        statut,
+        addedBy: user.id,
+        addedByName: user.name,
+        createdAt: new Date().toISOString()
+      };
+
+      chequesCache.push(newCheque);
+      await setDoc(doc(firestore, 'cheques', String(newCheque.id)), newCheque);
+      imported++;
+    } catch (err: any) {
+      errors.push(`Ligne ${idx + 1}: ${err.message || 'Erreur imprévue'}`);
+    }
+  }
+
+  recalculateBudgets();
+
+  return {
+    success: imported > 0,
+    imported,
+    errors
+  };
+}
+
+export async function bulkImportFournisseurs(items: any[]): Promise<{ success: boolean; imported: number; errors: string[] }> {
+  const errors: string[] = [];
+  let imported = 0;
+  const firestore = getDb();
+
+  for (let idx = 0; idx < items.length; idx++) {
+    const raw = items[idx];
+    try {
+      const nom = String(raw.nom || raw.Nom || raw['Raison Sociale'] || '').trim();
+      if (!nom) {
+        errors.push(`Ligne ${idx + 1}: Nom fournisseur manquant.`);
+        continue;
+      }
+
+      const existing = fournisseursCache.find(f => f.nom.toLowerCase() === nom.toLowerCase());
+      if (existing) {
+        // Update details if missing
+        if (!existing.telephone && raw.telephone) existing.telephone = String(raw.telephone);
+        if (!existing.adresse && raw.adresse) existing.adresse = String(raw.adresse);
+        await setDoc(doc(firestore, 'fournisseurs', String(existing.id)), existing);
+        imported++;
+        continue;
+      }
+
+      const newF: Fournisseur = {
+        id: Date.now() + idx,
+        nom,
+        telephone: String(raw.telephone || raw.Telephone || raw.Tel || raw['Tél'] || '').trim(),
+        adresse: String(raw.adresse || raw.Adresse || raw.Ville || '').trim(),
+        createdAt: new Date().toISOString()
+      };
+
+      fournisseursCache.push(newF);
+      await setDoc(doc(firestore, 'fournisseurs', String(newF.id)), newF);
+      imported++;
+    } catch (err: any) {
+      errors.push(`Ligne ${idx + 1}: ${err.message}`);
+    }
+  }
+
+  return {
+    success: imported > 0,
+    imported,
+    errors
+  };
+}

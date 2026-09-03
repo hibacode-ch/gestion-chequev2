@@ -10,6 +10,7 @@ import { FournisseursView } from './components/FournisseursView';
 import { StatistiquesView } from './components/StatistiquesView';
 import { RapportView } from './components/RapportView';
 import { AdminUsersView } from './components/AdminUsersView';
+import { BackupImportView } from './components/BackupImportView';
 import { NotificationsDrawer } from './components/NotificationsDrawer';
 
 export default function App() {
@@ -179,6 +180,18 @@ export default function App() {
             cheques={cheques}
             fournisseurs={fournisseurs}
             budget={budget}
+            user={currentUser}
+          />
+        )}
+
+        {/* Section: Sauvegarde & Import */}
+        {activeSection === 'sauvegarde' && (
+          <BackupImportView
+            user={currentUser}
+            cheques={cheques}
+            fournisseurs={fournisseurs}
+            budget={budget}
+            onDataChanged={loadAllData}
           />
         )}
 

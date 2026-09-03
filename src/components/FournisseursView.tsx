@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Fournisseur, Cheque } from '../types';
-import { Plus, Phone, MapPin, Search, Building, Check, X } from 'lucide-react';
+import { Plus, Phone, MapPin, Search, Building, Check, X, FileText, Download } from 'lucide-react';
 import { createFournisseur } from '../api';
+import { exportFournisseurStatementPDF } from '../utils/pdfExport';
 
 interface FournisseursViewProps {
   fournisseurs: Fournisseur[];
@@ -136,6 +137,16 @@ export const FournisseursView: React.FC<FournisseursViewProps> = ({
                   </div>
                 </div>
               </div>
+
+              <button
+                type="button"
+                onClick={() => exportFournisseurStatementPDF(f, supplierCheques, 'Direction Chez Sahraoui')}
+                className="w-full mt-3 py-1.5 bg-slate-50 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-lg text-xs font-semibold border border-slate-200 hover:border-indigo-200 transition flex items-center justify-center gap-1.5"
+                title="Générer le relevé de compte officiel en PDF"
+              >
+                <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Relevé Chèques PDF</span>
+              </button>
             </div>
           );
         })}

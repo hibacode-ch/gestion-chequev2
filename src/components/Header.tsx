@@ -163,6 +163,18 @@ export const Header: React.FC<HeaderProps> = ({
           >
             📈 Rapport
           </button>
+          <button
+            id="tabSauvegarde"
+            type="button"
+            onClick={() => setActiveSection('sauvegarde')}
+            className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition ${
+              activeSection === 'sauvegarde'
+                ? 'bg-blue-50 text-blue-700 font-semibold'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            💾 Sauvegarde & Import
+          </button>
           {user.role === 'admin' && (
             <button
               id="tabParametres"
