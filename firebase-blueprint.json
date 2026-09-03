@@ -1,0 +1,117 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System user account with role-based permissions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "username": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "gerant"] },
+        "password": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "username", "name", "role", "createdAt"]
+    },
+    "Cheque": {
+      "title": "Cheque",
+      "description": "Financial check issued to a supplier",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "numero": { "type": "string" },
+        "fournisseurId": { "type": "number" },
+        "montant": { "type": "number" },
+        "datePaiement": { "type": "string" },
+        "datePaiementReel": { "type": ["string", "null"] },
+        "bonLivraison": { "type": "string" },
+        "totalBon": { "type": "number" },
+        "photo": { "type": ["string", "null"] },
+        "statut": { "type": "string", "enum": ["en_attente", "paye", "impaye"] },
+        "addedBy": { "type": "number" },
+        "addedByName": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "numero", "fournisseurId", "montant", "datePaiement", "bonLivraison", "statut", "addedBy", "createdAt"]
+    },
+    "Fournisseur": {
+      "title": "Fournisseur",
+      "description": "Supplier information for Chez Sahraoui",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "nom": { "type": "string" },
+        "telephone": { "type": "string" },
+        "adresse": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "nom", "telephone", "adresse", "createdAt"]
+    },
+    "Budget": {
+      "title": "Budget",
+      "description": "Monthly spending cap and allocated total",
+      "type": "object",
+      "properties": {
+        "month": { "type": "number" },
+        "year": { "type": "number" },
+        "maxAmount": { "type": "number" },
+        "spent": { "type": "number" }
+      },
+      "required": ["month", "year", "maxAmount", "spent"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Security and operation audit trail",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "userId": { "type": "number" },
+        "username": { "type": "string" },
+        "date": { "type": "string" }
+      },
+      "required": ["id", "action", "details", "userId", "username", "date"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Payment and budget notifications",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "type": { "type": "string" },
+        "message": { "type": "string" },
+        "date": { "type": "string" },
+        "urgent": { "type": "boolean" }
+      },
+      "required": ["id", "type", "message", "date", "urgent"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Collection of system user accounts"
+    },
+    "/cheques/{chequeId}": {
+      "schema": { "$ref": "#/entities/Cheque" },
+      "description": "Collection of checks issued"
+    },
+    "/fournisseurs/{fournisseurId}": {
+      "schema": { "$ref": "#/entities/Fournisseur" },
+      "description": "Collection of suppliers"
+    },
+    "/budgets/{budgetId}": {
+      "schema": { "$ref": "#/entities/Budget" },
+      "description": "Monthly budget allocations"
+    },
+    "/auditLog/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Audit records of all modifications"
+    },
+    "/notifications/{notifId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "Operational notifications"
+    }
+  }
+}
